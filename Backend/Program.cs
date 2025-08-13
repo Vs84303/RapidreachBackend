@@ -13,14 +13,14 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ---------- Render: optional PORT binding (works even if ASPNETCORE_URLS is not set) ----------
+// ========== Render: bind to injected PORT if present ==========
 var port = Environment.GetEnvironmentVariable("PORT");
 if (!string.IsNullOrWhiteSpace(port) && int.TryParse(port, out var p))
 {
     builder.WebHost.ConfigureKestrel(o => o.ListenAnyIP(p));
 }
 
-// ---------- CORS: allow from env (comma separated) or fall back to AllowAll for dev ----------
+// ========== CORS (prod from env, dev fallback AllowAll) ==========
 var allowedOrigins = Environment.GetEnvironmentVariable("ALLOWED_ORIGINS"); // e.g. https://your-frontend.onrender.com,https://www.yourdomain.com
 builder.Services.AddCors(options =>
 {
@@ -37,7 +37,6 @@ builder.Services.AddCors(options =>
     }
     else
     {
-        // Dev fallback
         options.AddPolicy("CorsPolicy", policy =>
         {
             policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
@@ -45,41 +44,60 @@ builder.Services.AddCors(options =>
     }
 });
 
-// ---------- Controllers + sane JSON options (no duplicate AddControllers) ----------
+// ========== Controllers & JSON ==========
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
-    // Avoid $id/$ref noise and keep responses pretty
     options.JsonSerializerOptions.ReferenceHandler = null;
     options.JsonSerializerOptions.WriteIndented = true;
     options.JsonSerializerOptions.MaxDepth = 64;
 });
 
-// ---------- EF Core with MySQL (Render: env var override) ----------
-var csFromEnv = Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
-var connectionString = string.IsNullOrWhiteSpace(csFromEnv)
-    ? builder.Configuration.GetConnectionString("DefaultConnection")
-    : csFromEnv;
+// ========== EF Core: auto-pick provider based on env vars ==========
+var mssql = Environment.GetEnvironmentVariable("SQLSERVER_CONNECTION_STRING");
+var mysql = Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
 
-builder.Services.AddDbContext<RapidreachContext>(options =>
-    options.UseMySql(
-        connectionString,
-        new MySqlServerVersion(new Version(8, 0, 43)),
-        mySqlOptions =>
-        {
-            mySqlOptions.EnableRetryOnFailure(
+if (!string.IsNullOrWhiteSpace(mssql))
+{
+    // Use SQL Server
+    builder.Services.AddDbContext<RapidreachContext>(options =>
+        options.UseSqlServer(
+            mssql,
+            sql => sql.EnableRetryOnFailure(
                 maxRetryCount: 5,
                 maxRetryDelay: TimeSpan.FromSeconds(10),
                 errorNumbersToAdd: null
-            );
-        }
-    )
-);
+            )
+        )
+    );
+}
+else
+{
+    // Use MySQL (env or appsettings.json)
+    var fallback = string.IsNullOrWhiteSpace(mysql)
+        ? builder.Configuration.GetConnectionString("DefaultConnection")
+        : mysql;
 
-// ---------- Swagger ----------
+    builder.Services.AddDbContext<RapidreachContext>(options =>
+        options.UseMySql(
+            fallback,
+            new MySqlServerVersion(new Version(8, 0, 43)),
+            mySqlOptions =>
+            {
+                mySqlOptions.EnableRetryOnFailure(
+                    maxRetryCount: 5,
+                    maxRetryDelay: TimeSpan.FromSeconds(10),
+                    errorNumbersToAdd: null
+                );
+            }
+        )
+    );
+}
+
+// ========== Swagger ==========
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// ---------- JWT from configuration or env (Render uses double-underscore for nested keys) ----------
+// ========== JWT (env overrides appsettings; __ = nested keys) ==========
 var jwtSection = builder.Configuration.GetSection("JWT");
 builder.Services.Configure<JWTSettings>(jwtSection);
 
@@ -92,7 +110,6 @@ var jwtSettings = new JWTSettings
 
 var key = Encoding.ASCII.GetBytes(jwtSettings.SecretKey ?? throw new InvalidOperationException("JWT SecretKey not configured."));
 
-// ---------- Authentication ----------
 builder.Services.AddAuthentication(options =>
 {
     options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -100,25 +117,21 @@ builder.Services.AddAuthentication(options =>
 })
 .AddJwtBearer(options =>
 {
-    // Render terminates SSL at the proxy; we honor X-Forwarded-Proto below
-    options.RequireHttpsMetadata = false;
+    options.RequireHttpsMetadata = false; // TLS is terminated by Render proxy
     options.SaveToken = true;
     options.TokenValidationParameters = new TokenValidationParameters
     {
         ValidateIssuer = true,
         ValidIssuer = jwtSettings.Issuer,
-
         ValidateAudience = true,
         ValidAudience = jwtSettings.Audience,
-
         ValidateLifetime = true,
-
         ValidateIssuerSigningKey = true,
         IssuerSigningKey = new SymmetricSecurityKey(key)
     };
 });
 
-// ---------- Services & Repos ----------
+// ========== Services & Repositories ==========
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IBranchService, BranchService>();
 builder.Services.AddScoped<ICourierService, CourierService>();
@@ -141,17 +154,17 @@ builder.Services.AddHostedService<DataSeeder>();
 
 var app = builder.Build();
 
-// ---------- Render: respect reverse proxy headers BEFORE redirects/auth ----------
+// ========== Reverse proxy headers (before redirects/auth) ==========
 app.UseForwardedHeaders(new ForwardedHeadersOptions
 {
     ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
 });
 
-// (Optional) enable Swagger in production too (handy on Render)
+// Swagger in prod too (handy on Render)
 app.UseSwagger();
 app.UseSwaggerUI();
 
-app.UseHttpsRedirection();        // safe because X-Forwarded-Proto is honored above
+app.UseHttpsRedirection();
 app.UseRouting();
 
 app.UseCors("CorsPolicy");
