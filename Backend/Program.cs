@@ -52,46 +52,23 @@ builder.Services.AddControllers().AddJsonOptions(options =>
     options.JsonSerializerOptions.MaxDepth = 64;
 });
 
-// ========== EF Core: auto-pick provider based on env vars ==========
-var mssql = Environment.GetEnvironmentVariable("SQLSERVER_CONNECTION_STRING");
-var mysql = Environment.GetEnvironmentVariable("MYSQL_CONNECTION_STRING");
+// ========== EF Core: SQL Server (Azure SQL) ==========
+var mssql = Environment.GetEnvironmentVariable("SQLSERVER_CONNECTION_STRING")
+           ?? builder.Configuration.GetConnectionString("DefaultConnection"); // optional fallback
 
-if (!string.IsNullOrWhiteSpace(mssql))
-{
-    // Use SQL Server
-    builder.Services.AddDbContext<RapidreachContext>(options =>
-        options.UseSqlServer(
-            mssql,
-            sql => sql.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(10),
-                errorNumbersToAdd: null
-            )
-        )
-    );
-}
-else
-{
-    // Use MySQL (env or appsettings.json)
-    var fallback = string.IsNullOrWhiteSpace(mysql)
-        ? builder.Configuration.GetConnectionString("DefaultConnection")
-        : mysql;
+if (string.IsNullOrWhiteSpace(mssql))
+    throw new InvalidOperationException("SQLSERVER_CONNECTION_STRING is not configured.");
 
-    builder.Services.AddDbContext<RapidreachContext>(options =>
-        options.UseMySql(
-            fallback,
-            new MySqlServerVersion(new Version(8, 0, 43)),
-            mySqlOptions =>
-            {
-                mySqlOptions.EnableRetryOnFailure(
-                    maxRetryCount: 5,
-                    maxRetryDelay: TimeSpan.FromSeconds(10),
-                    errorNumbersToAdd: null
-                );
-            }
+builder.Services.AddDbContext<RapidreachContext>(options =>
+    options.UseSqlServer(
+        mssql,
+        sql => sql.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(10),
+            errorNumbersToAdd: null
         )
-    );
-}
+    )
+);
 
 // ========== Swagger ==========
 builder.Services.AddEndpointsApiExplorer();
@@ -108,7 +85,7 @@ var jwtSettings = new JWTSettings
     SecretKey = Environment.GetEnvironmentVariable("JWT__SecretKey") ?? jwtSection["SecretKey"]
 };
 
-var key = Encoding.ASCII.GetBytes(jwtSettings.SecretKey ?? throw new InvalidOperationException("JWT SecretKey not configured."));
+var keyBytes = Encoding.ASCII.GetBytes(jwtSettings.SecretKey ?? throw new InvalidOperationException("JWT SecretKey not configured."));
 
 builder.Services.AddAuthentication(options =>
 {
@@ -127,7 +104,7 @@ builder.Services.AddAuthentication(options =>
         ValidAudience = jwtSettings.Audience,
         ValidateLifetime = true,
         ValidateIssuerSigningKey = true,
-        IssuerSigningKey = new SymmetricSecurityKey(key)
+        IssuerSigningKey = new SymmetricSecurityKey(keyBytes)
     };
 });
 
@@ -173,5 +150,12 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// ========== Optional: apply migrations at startup (uncomment if desired) ==========
+// using (var scope = app.Services.CreateScope())
+// {
+//     var db = scope.ServiceProvider.GetRequiredService<RapidreachContext>();
+//     db.Database.Migrate();
+// }
 
 app.Run();
