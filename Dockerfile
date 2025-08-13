@@ -2,18 +2,18 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy solution and project files separately to leverage Docker layer caching
-COPY RapidReachNET.sln ./
-COPY RapidReachNET.csproj ./
+# Copy project file (Docker build context is repo root; Dockerfile is in Backend/)
+COPY Backend/RapidReachNET.csproj ./Backend/
 
 # Restore dependencies
-RUN dotnet restore RapidReachNET.csproj
+RUN dotnet restore ./Backend/RapidReachNET.csproj
 
 # Copy the rest of the source code
-COPY . .
+COPY Backend/. ./Backend/
 
 # Publish
-RUN dotnet publish RapidReachNET.csproj -c Release -o /app/publish /p:UseAppHost=false
+WORKDIR /src/Backend
+RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
 
 # Stage 2: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
