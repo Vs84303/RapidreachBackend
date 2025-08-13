@@ -1,0 +1,20 @@
+{
+  "dependencies": {
+    "apis1": {
+      "restored": true,
+      "restoreTime": "2025-08-13T06:05:55.9638325Z"
+    }
+  },
+  "parameters": {
+    "apis1.resourceGroupName": {
+      "Name": "apis1.resourceGroupName",
+      "Type": "resourceGroup",
+      "Value": "appsvc_windows_eastasia_basic"
+    },
+    "apis1.subscriptionId": {
+      "Name": "apis1.subscriptionId",
+      "Type": "subscription",
+      "Value": "8f60f8fe-0092-48bc-89bd-b90078eb0b75"
+    }
+  }
+}

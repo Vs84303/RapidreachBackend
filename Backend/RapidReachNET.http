@@ -1,0 +1,6 @@
+@RapidReachNET_HostAddress = http://localhost:5174
+
+GET {{RapidReachNET_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
