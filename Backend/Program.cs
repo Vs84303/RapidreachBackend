@@ -61,7 +61,18 @@ var connectionString = string.IsNullOrWhiteSpace(csFromEnv)
     : csFromEnv;
 
 builder.Services.AddDbContext<RapidreachContext>(options =>
-    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 43)))
+    options.UseMySql(
+        connectionString,
+        new MySqlServerVersion(new Version(8, 0, 43)),
+        mySqlOptions =>
+        {
+            mySqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(10),
+                errorNumbersToAdd: null
+            );
+        }
+    )
 );
 
 // ---------- Swagger ----------
